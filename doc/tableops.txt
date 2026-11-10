@@ -1,0 +1,668 @@
+*tableops.txt*	Edit Markdown tables by column and by cell.
+
+Author:  kis9a
+License: MIT
+
+==============================================================================
+CONTENTS						*tableops-contents*
+
+  1. Introduction ........................... |tableops-intro|
+  2. Quick start ............................ |tableops-quickstart|
+  3. Commands ............................... |tableops-commands|
+  4. Mappings ............................... |tableops-mappings|
+  5. Options ................................ |tableops-options|
+  6. Functions .............................. |tableops-functions|
+  7. Text format ............................ |tableops-text-format|
+  8. Messages ............................... |tableops-messages|
+  9. Privacy ................................ |tableops-privacy|
+ 10. Limitations ............................ |tableops-limitations|
+
+==============================================================================
+1. Introduction						*tableops-intro*
+
+vim-tableops — Edit Markdown tables by column and by cell.
+
+Delete, insert, move and sort whole columns of a Markdown table
+(`| a | b |`), put the pattern of a column in |@/|, reformat the table,
+and move between cells or select one. A table is read into a list of
+cells, changed as a list and written back, so `\|` in a cell, the
+alignment of the separator row (`:---:`) and the width of wide
+characters are kept.
+
+- The table is the one under the cursor: the lines around it that start
+  with `|` (after blanks).
+- A count, and the argument of a command, is a column number (1 is the
+  leftmost column), so the cursor can be anywhere in the table
+  (|tableops-count|).
+- One |u| undoes a whole command, and only the lines that changed are
+  written. Lines outside the table never change.
+- After a delete, insert or move the cursor stays in its cell.
+- The mappings that change columns repeat with |.| (no vim-repeat).
+- No keys are mapped and no autocommands are defined. Use the commands,
+  the |<Plug>| mappings (|tableops-mappings|) or aliases of your own
+  (|tableops-aliases|).
+
+Requirements:
+- Vim 9.0 or later, or Neovim 0.9 or later. On an older version the
+  plugin defines nothing and leaves |g:loaded_tableops| unset.
+- Nothing else. With vim-rxops the column pattern drives its commands
+  (|tableops-rxops|).
+
+==============================================================================
+2. Quick start						*tableops-quickstart*
+
+With the cursor anywhere in this table >
+	| name | 年齢 | city \| area |
+	|:-----|-----:|:------------:|
+	| foo  |   12 | tokyo        |
+<	see the column numbers with >
+	:TableopsColumns
+<	which shows `1:name  2:年齢  3:city \| area`. Then >
+	:TableopsDeleteColumn 2
+<	deletes the second column: >
+	| name | city \| area |
+	|:-----|:------------:|
+	| foo  | tokyo        |
+<
+Other examples: >
+	:TableopsInsertColumn 1		" empty column right of column 1
+	:TableopsInsertColumn! 1	" ... left of column 1
+	:TableopsMoveColumn -1		" cursor column one to the left
+	:TableopsSortColumn 2 n		" rows by column 2, as numbers
+	:TableopsSearchColumn 3		" @/ = column 3, highlighted
+	:%TableopsFormat		" align every table in the buffer
+<
+==============================================================================
+3. Commands						*tableops-commands*
+
+Every command works on one table:
+- Without a range: the table of the cursor line.
+- With a range: the table of the first line of the range. The last line
+  must be in the same table (`range must be inside one table`). The
+  range never gives a column number; |:TableopsFormat| is the only
+  command that works on several tables.
+Outside a table a command reports `not in a table` and changes nothing.
+When the range names another table, the cursor is not in it, so a
+column number must be given.
+
+Column numbers start at 1. A number that is 0, not a number, or larger
+than the number of columns is an error and nothing changes
+(`no column 5 (the table has 3)`). Every command can be followed by `|`
+and another command (|:bar|).
+
+A change that would make the table read differently is refused and
+changes nothing (`result would change the table structure`): in a
+table without a header, deleting a column can leave a second row of `-`
+cells only, which would be read as a separator row (and the first row as
+a header); sorting can put such a row first or second.
+
+:[range]TableopsFormat					*:TableopsFormat*
+	Align the table: every column as wide as its widest cell, a blank
+	on each side of every cell, the closing `|` on every row, and short
+	rows filled with empty cells (|tableops-text-format|). The cursor
+	stays on the same character of its cell.
+	With a range, every table that has a line in the range; when one of
+	them cannot be read (a separator row first, CR line endings),
+	nothing is changed. `no table in range` when there is none.
+	A table that is already aligned is not touched (no undo step, the
+	buffer is not marked modified).
+
+:[range]TableopsDeleteColumn [N ...]		*:TableopsDeleteColumn*
+	Delete column [N], or the cursor column. More numbers delete those
+	columns at once, in one undo step; the order and duplicates do not
+	matter (`:TableopsDeleteColumn 4 2 2` is `2 4`). Deleting every
+	column is an error (`cannot delete every column`; use `dap`).
+	The cursor stays in its cell; when that cell was deleted, it goes
+	to the cell now at its place on the same line (the last one when it
+	was the last).
+
+:[range]TableopsInsertColumn[!] [N]		*:TableopsInsertColumn*
+	Insert an empty column right of column [N], or of the cursor column.
+	With [!] left of it. The new column gets `---` in the separator
+	row. Only one number (`give one column number`). The cursor stays
+	in its cell.
+
+:TableopsMoveColumn {N}					*:TableopsMoveColumn*
+	Move the cursor column {N} columns: `-1` or `1` (`+1`) to the left
+	or right, `-2` two to the left. It stops at the edge of the table;
+	when the column is already there, it says
+	`column is already at the edge`. `0` does nothing. The cursor goes
+	with the column. {N} is a distance, not a column number. No range:
+	the cursor must be in the table.
+
+:[range]TableopsSortColumn[!] [N] [n][i]		*:TableopsSortColumn*
+	Sort the rows of the table by column [N], or by the cursor column.
+	The header and the separator row stay on top; a table without a
+	header sorts all its rows. The sort is stable: rows with equal
+	keys keep their order, also with [!].
+	[n]	Compare the first number of each cell
+		(`-\=\d\+\%(\.\d\+\)\=`, compared exactly). Cells without a
+		number come first, as with |:sort| n (last with [!]).
+	[i]	Ignore case. Ignored together with [n].
+	[!]	Reverse the order.
+	Without [n] the cells are compared byte by byte. The flags may be
+	written together or apart (`ni`, `n i`) and before or after [N]:
+	`:TableopsSortColumn 3 n`. The cursor stays on the same line and in
+	the same column. A table with one row or none is left alone.
+
+:[range]TableopsSearchColumn [N]		*:TableopsSearchColumn*
+	Put the pattern of column [N], or of the cursor column, in |@/| and
+	in the search history, and set |v:hlsearch| so the column is
+	highlighted ('hlsearch' must be on). |n| then jumps to the same
+	column on the next row. The pattern matches the `|` before the
+	cell and the cell text up to the next `|`, on every row, the
+	separator row too (|tableops-pattern|). The buffer does not change.
+	Only one number (`give one column number`). On an error |@/| does
+	not change either. See |tableops-rxops|.
+
+:[range]TableopsColumns					*:TableopsColumns*
+	Show the column numbers with the header cells, e.g. >
+		1:name  2:年齢  3:city \| area
+<	An empty header cell is shown as `3:(empty)`. A table without a
+	header shows its first row. The line is shown in full, not cut to
+	50 columns. The buffer does not change.
+
+							*tableops-count*
+Counts and column numbers ~
+
+A count of a mapping, like the argument of a command, is a column number
+(1-based). Without a count the column is the cursor column. The cursor
+may be on any row and any cell of the table, the separator row too.
+
+	operation		no count		count N ~
+	delete			cursor column		column N
+	insert after/before	right/left of		right/left of
+				the cursor column	column N
+	sort			by the cursor column	by column N
+	search (|@/|)		cursor column		column N
+	move left/right		1 column		N columns (a distance,
+							as for |h| and |l|)
+
+Unlike vim-table-mode, where a count means "N columns to the right of the
+cursor", a count here is the number of a column.
+
+							*tableops-aliases*
+The plugin defines only the `Tableops` names. Short aliases for your
+vimrc (none of the arguments contains `|`, so `-bar` is fine): >
+	command! -range -bar TF <line1>,<line2>TableopsFormat
+	command! -range -nargs=* -bar TX
+	      \ <line1>,<line2>TableopsDeleteColumn <args>
+	command! -range -nargs=? -bang -bar TI
+	      \ <line1>,<line2>TableopsInsertColumn<bang> <args>
+	command! -nargs=1 -bar TM TableopsMoveColumn <args>
+	command! -range -nargs=* -bang -bar TO
+	      \ <line1>,<line2>TableopsSortColumn<bang> <args>
+	command! -range -nargs=? -bar TS
+	      \ <line1>,<line2>TableopsSearchColumn <args>
+	command! -range -bar TC <line1>,<line2>TableopsColumns
+<	Without a range these pass the cursor line, which picks the same
+	table; only |:TableopsFormat| then says `no table in range` instead
+	of `not in a table`. Check where a name comes from with
+	`:verbose command TF`.
+
+==============================================================================
+4. Mappings						*tableops-mappings*
+
+No keys are mapped by default. Modes: n Normal, x Visual, o
+Operator-pending.
+
+<Plug> mapping				modes	does ~
+<Plug>(tableops-format)			n	|:TableopsFormat|
+<Plug>(tableops-delete-column)		n x	|:TableopsDeleteColumn|
+<Plug>(tableops-insert-column-after)	n	|:TableopsInsertColumn|
+<Plug>(tableops-insert-column-before)	n	|:TableopsInsertColumn|!
+<Plug>(tableops-move-column-left)	n	|:TableopsMoveColumn| -N
+<Plug>(tableops-move-column-right)	n	|:TableopsMoveColumn| N
+<Plug>(tableops-sort-column)		n	|:TableopsSortColumn| (*)
+<Plug>(tableops-search-column)		n	|:TableopsSearchColumn|
+<Plug>(tableops-columns)		n	|:TableopsColumns|
+<Plug>(tableops-cell-left)		n x o	previous cell
+<Plug>(tableops-cell-right)		n x o	next cell
+<Plug>(tableops-cell-up)		n x o	cell above
+<Plug>(tableops-cell-down)		n x o	cell below
+<Plug>(tableops-inner-cell)		x o	cell text
+<Plug>(tableops-a-cell)			x o	cell with its blanks and |
+
+(*) Stops on the command line for the flags: `:TableopsSortColumn ` (with
+a count `:TableopsSortColumn 3 `). Type `n`, `i` or nothing and <CR>. It
+is defined only when the plugin defined |:TableopsSortColumn|.
+
+					*<Plug>(tableops-format)*
+					*<Plug>(tableops-delete-column)*
+					*<Plug>(tableops-insert-column-after)*
+				*<Plug>(tableops-insert-column-before)*
+					*<Plug>(tableops-move-column-left)*
+					*<Plug>(tableops-move-column-right)*
+					*<Plug>(tableops-sort-column)*
+					*<Plug>(tableops-search-column)*
+					*<Plug>(tableops-columns)*
+Column mappings ~
+
+The count is a column number (|tableops-count|); the format and columns
+mappings take no count. In Visual mode
+<Plug>(tableops-delete-column) deletes every column the selection
+touches (|tableops-visual-delete|).
+
+							*tableops-repeat*
+Repeating with . ~
+
+The delete, insert and move mappings in Normal mode can be repeated
+with |.|. They work through 'operatorfunc' and `g@l`, and read the count
+when they run:
+- `.` uses the same count: `3<Plug>(tableops-delete-column)` and `.` `.`
+  delete column 3 three times (the original columns 3 to 5).
+- Without a count, `.` works on the cursor column again (it does not
+  remember a number): move to another cell and press `.`.
+- A count on `.` wins: `2.` deletes column 2 (and a later `.` too).
+The format, sort, search and columns mappings are not repeated by `.`.
+
+						*tableops-visual-delete*
+Deleting columns in Visual mode ~
+
+In Visual mode <Plug>(tableops-delete-column) deletes every column that
+the selection touches, in one undo step. The columns are found by the
+screen column (|virtcol()|) of both ends of the selection, so wide
+characters do not shift them:
+- |v|: from the column of the start to the column of the end.
+- |V|: the columns of the cursor positions at the start and the end.
+- |CTRL-V|: the columns between the left and right edges of the block,
+  on both end lines. With `$` to the last column.
+A `|` between two cells counts as the cell on its right at the start of
+the selection (the end that comes first in the buffer, the left edge of
+a block) and as the cell on its left at the end (the end that comes
+later, the right edge), so a selection that stops on a closing `|`
+touches only the cells before it: `va|` (|tableops-text-objects|) and
+`vf|` from a cell delete that one column. A selection of one character
+(a block one column wide) on a `|` is the cell on its right. With |V|
+the ends are only cursor positions and a `|` is the cell on its right.
+'selection' "exclusive" is followed. Both ends must be in the same table
+(`selection must be inside one table`). Visual mode always ends, also
+on an error, as for |v_d|. A count is ignored. |.| does not repeat it:
+it repeats the change made before.
+
+					*<Plug>(tableops-cell-left)*
+					*<Plug>(tableops-cell-right)*
+					*<Plug>(tableops-cell-up)*
+					*<Plug>(tableops-cell-down)*
+						*tableops-cell-motions*
+Cell motions ~
+
+The cursor goes to the first non-blank character of the cell (into a
+blank cell: one blank after its `|`). An empty cell (`||`) has no
+character of its own: the cursor goes to its closing `|`, and that `|`
+counts as part of the empty cell (for every motion, command and text
+object), not of the cell on its right. A count repeats the step. The
+separator row is skipped (only when it is one, |tableops-text-format|).
+
+In Normal and Visual mode:
+- right: the next cell; from the last cell of a row the first cell of
+  the next row.
+- left: the previous cell; from the first cell the last cell of the
+  previous row.
+- up / down: the cell with the same number on the row above / below.
+  A row with fewer cells gives its last cell; a count remembers the
+  number across such rows.
+- At the edge of the table the cursor stays and the count is dropped
+  (it does not go to the next key). Outside a table: `not in a table`.
+
+						*tableops-o-motions*
+In Operator-pending mode the motions are made so that an operator never
+joins lines and breaks the table:
+- left / right do not leave the line. They are |exclusive| and
+  characterwise: `d]|` deletes from the cursor up to the text of the
+  next cell. Where they cannot move (the last cell for right, the first
+  for left), the operator is cancelled.
+- up / down are |linewise|: `d}|` deletes the cursor row and the row
+  below. A range that would hold the separator row has no target:
+  `d}|` on the header and `d{|` on the first row below the separator
+  are cancelled, so the separator row is never deleted with a row.
+- On the separator row itself there is no target either (as for the
+  text objects): `d]|` there does nothing.
+- When there is no target (outside a table, at the edge, across or on
+  the separator row) the operator is cancelled with <Esc>: `c` does not
+  start Insert mode, `y` does not change the unnamed register, nothing
+  is changed.
+- With |.| the target is found again from the new cursor position (`d]|`
+  then `.` on another row works on that row).
+- A |.| cannot be cancelled: when the repeated motion has no target the
+  operator works from the cursor alone (`d}|` then `.` on the last row
+  deletes that row; `.` with `d]|` in the last cell does nothing).
+
+					*<Plug>(tableops-inner-cell)*
+					*<Plug>(tableops-a-cell)*
+						*tableops-text-objects*
+Cell text objects ~
+
+<Plug>(tableops-inner-cell) selects the text of the cursor cell without
+the blanks around it; in a cell of blanks only, the blanks. An empty
+cell (`||`) has no text: the operator is cancelled, and in Visual mode
+the selection stays as it was (<Plug>(tableops-a-cell) selects its
+closing `|`).
+<Plug>(tableops-a-cell) selects the cell from after its left `|` through
+its closing `|` (the end of the line when the row has no closing `|`).
+On the separator row there is no object. Both are characterwise, follow
+'selection' and can be repeated with |.| (`ci|` ... then `.`).
+Where there is no object (the separator row, outside a table, `i|` on
+an empty cell) a typed `ci|` is cancelled, but a |.| that repeats it
+cannot be: the operator then works on the text at the cursor.
+`ci|NEW<Esc>` then `.` on the separator row makes `|-NEW---|`; on a
+line outside the table it inserts `NEW` there. Press |u| to undo it.
+
+						*tableops-key-mappings*
+Example: keys in Markdown buffers only ~
+
+These are the keys of the README. They are made local to the buffer
+with <unique>, so that a key already mapped in the buffer is an error
+instead of being replaced. The `b:tableops_maps` guard and
+|b:undo_ftplugin| keep a second FileType event (`:e`,
+`:set ft=markdown`) from raising |E227|: >
+	function! s:tableops_maps() abort
+	  if exists('b:tableops_maps')
+	    return
+	  endif
+	  let b:tableops_maps = 1
+	  let l:undo = ['unlet! b:tableops_maps']
+	  for [l:modes, l:lhs, l:name] in [
+	        \ ['n',   '<Leader>tf',   'format'],
+	        \ ['nx',  '<Leader>tx',   'delete-column'],
+	        \ ['n',   '<Leader>ta',   'insert-column-after'],
+	        \ ['n',   '<Leader>ti',   'insert-column-before'],
+	        \ ['n',   '<Leader>t<lt>', 'move-column-left'],
+	        \ ['n',   '<Leader>t>',   'move-column-right'],
+	        \ ['n',   '<Leader>to',   'sort-column'],
+	        \ ['n',   '<Leader>t/',   'search-column'],
+	        \ ['n',   '<Leader>tc',   'columns'],
+	        \ ['nxo', '[<Bar>',       'cell-left'],
+	        \ ['nxo', ']<Bar>',       'cell-right'],
+	        \ ['nxo', '{<Bar>',       'cell-up'],
+	        \ ['nxo', '}<Bar>',       'cell-down'],
+	        \ ['xo',  'i<Bar>',       'inner-cell'],
+	        \ ['xo',  'a<Bar>',       'a-cell']]
+	    for l:m in split(l:modes, '\zs')
+	      execute printf('%smap <buffer> <unique> %s <Plug>(tableops-%s)',
+	            \ l:m, l:lhs, l:name)
+	      call add(l:undo, printf('silent! %sunmap <buffer> %s',
+	            \ l:m, l:lhs))
+	    endfor
+	  endfor
+	  let b:undo_ftplugin = join(l:undo, '|')
+	        \ . (exists('b:undo_ftplugin') && b:undo_ftplugin !=# ''
+	        \ ? '|' . b:undo_ftplugin : '')
+	endfunction
+	augroup my_tableops
+	  autocmd!
+	  autocmd FileType markdown call s:tableops_maps()
+	augroup END
+	" Neovim: the file opened at startup gets FileType earlier
+	if &filetype ==# 'markdown'
+	  call s:tableops_maps()
+	endif
+<	Write `|` as `<Bar>` in a mapping (`[|` would end the command), and
+	`<` as `<lt>`. The undo commands are joined with `|` without
+	blanks: an |:unmap| takes trailing blanks as part of the key.
+	They go before an existing |b:undo_ftplugin|: one that ends in
+	`autocmd! {group} * <buffer>` would take a `|` and what follows
+	as part of that |:autocmd| (E1155), and the maps would stay.
+	Define the augroup after `filetype plugin on` (with vim-plug: after
+	`plug#end()`). Otherwise the ftplugin's FileType autocommand runs
+	after this one and executes |b:undo_ftplugin|, which removes the
+	maps just made. In Neovim the file given on the command line gets
+	its FileType while the vimrc is still running, before this augroup
+	exists, hence the call for the current buffer after it.
+	`{|` and `}|` make the plain |{| and |}| wait for 'timeoutlen' in
+	these buffers, because they start a longer mapping.
+
+==============================================================================
+5. Options						*tableops-options*
+
+There are no options.
+
+							*g:loaded_tableops*
+Set `g:loaded_tableops` to 1 before the plugin loads to disable it.
+
+==============================================================================
+6. Functions						*tableops-functions*
+
+The commands and mappings call these. The ones that change the buffer
+return a Result Dictionary and report an error once themselves:
+	ok	1 on success
+	code	'' on success, else one of `not_table`, `range`,
+		`bad_column`, `bad_args`, `all_columns`, `malformed`,
+		`crlf`, `ambiguous`, `not_modifiable`, `not_visual`,
+		`vim_error`;
+		`edge` (with ok 1) when a move is already at the edge
+	changed	1 when the buffer was changed, else 0 (always 0 on a
+		failure, except `vim_error` after part of the table was
+		written)
+{line1}, {line2} and {range} are as <line1>, <line2> and <range> of
+|:command|: with {range} 0 the cursor line chooses the table. {args} is
+the argument of the command as a String.
+
+tableops#format({line1}, {line2}, {range})		*tableops#format()*
+	|:TableopsFormat|.
+
+tableops#format_at({lnum})				*tableops#format_at()*
+	Format the table of line {lnum}. Silent: outside a table, a table
+	that cannot be read (|tableops-text-format|) or would read
+	differently (`ambiguous`), or a buffer that is not 'modifiable' is
+	no change and no message. For autocommands
+	(|tableops-auto-format|).
+
+				*tableops#delete_column()*
+tableops#delete_column({line1}, {line2}, {range}, {args})
+	|:TableopsDeleteColumn|.
+
+				*tableops#insert_column()*
+tableops#insert_column({line1}, {line2}, {range}, {before}, {args})
+	|:TableopsInsertColumn|; {before} 1 is the [!].
+
+tableops#move_column({arg})			*tableops#move_column()*
+	|:TableopsMoveColumn|; {arg} is a String like "-1".
+
+				*tableops#sort_column()*
+tableops#sort_column({line1}, {line2}, {range}, {reverse}, {args})
+	|:TableopsSortColumn|; {reverse} 1 is the [!].
+
+tableops#columns({line1}, {line2}, {range})		*tableops#columns()*
+	|:TableopsColumns|. The Result also has `text`, the line shown;
+	`changed` is always 0.
+
+				*tableops#search_column()*
+tableops#search_column({line1}, {line2}, {range}, {args})
+	Returns the command that sets |@/| for |:TableopsSearchColumn|, or
+	'' after an error (reported). Run it with |:execute| outside a
+	function: Vim restores |v:hlsearch| when a function returns
+	(|function-search-undo|). >
+		execute tableops#search_column(line('.'), line('.'), 0, '2')
+<
+tableops#column_pattern({lnum}, {col})		*tableops#column_pattern()*
+	The pattern of the column that holds byte {col} of line {lnum}
+	(|tableops-pattern|), or '' when the line is not in a table. Silent.
+
+The mappings use `tableops#delete_column_count()`,
+`tableops#insert_column_count()`, `tableops#search_column_count()`,
+`tableops#delete_column_visual()`, `tableops#cell_motion()` and
+`tableops#cell_object()`; use the |<Plug>| mappings instead.
+
+						*tableops-auto-format*
+Formatting when leaving Insert mode ~
+
+The plugin does not format while you type. To align the table each time
+you leave Insert mode: >
+	augroup my_tableops_format
+	  autocmd!
+	  autocmd InsertLeave *.md call tableops#format_at(line('.'))
+	augroup END
+<	The formatting joins the undo step of the text you typed: one |u|
+	undoes both. Lines starting with `|` in a code block are formatted
+	too (|tableops-limitations|).
+	A block insert (|v_b_I|, |v_b_A|: `<C-v>jIxx<Esc>`) does not work
+	with it: InsertLeave runs before Vim copies the text to the other
+	lines, so the first line is formatted and the text goes into the
+	other lines at the old column, unaligned. Run |:TableopsFormat|
+	afterwards.
+
+						*tableops-rxops*
+Using with vim-rxops ~
+
+vim-rxops works on the matches of |@/|, so the column pattern turns its
+`...Matches` commands into column commands. With the rxops aliases
+`DM`, `KM`, `YM` and `SM` (see `:help rxops-aliases`), on the table of
+|tableops-quickstart|: >
+	:TableopsSearchColumn 2
+	vip
+	:DM
+<	(the command line becomes `:'<,'>DM`) deletes the second column: >
+	| name | city \| area |
+	|:-----|:------------:|
+	| foo  | tokyo        |
+<	Select the table first (|vip|): without a range rxops works on the
+	whole buffer. In the same way:
+	- `:'<,'>KM` keeps only the column, one cell per line (`| 年齢 `).
+	- `:'<,'>YM` yanks the column.
+	- `:'<,'>SM /tokyo/Kyoto/` substitutes only inside the column.
+	The match of the last column stops before the closing `|`, so `DM`
+	on the last column leaves that `|`; it then closes the new last
+	column. Run |:TableopsFormat| after a change that leaves the
+	widths uneven.
+
+==============================================================================
+7. Text format						*tableops-text-format*
+
+Table ~
+A table is a run of lines that start with `|` after optional blanks
+(`^\s*|`). Blank lines and other lines end it. The indent of the first
+line is used for every row when the table is written.
+
+Separator row ~
+The second line is the separator row when every cell of it is empty or
+`---`, `:---`, `---:` or `:---:` (any number of `-`) and at least one
+cell has a `-`, so `| --- | |` is one. Then the first line is the
+header. When the second line is not a separator row the table has no
+header, and none is added. A table whose first line is a separator row
+cannot be read (`the table starts with a separator row`): the separator
+would be taken as data.
+
+Cells ~
+- A `|` separates cells. `\|` is always a character of the cell, so
+  `\\|` is `\` and `\|`. Any other `\` is an ordinary character.
+- The closing `|` is optional. Blanks after the last `|` are no cell.
+- Blanks (space and tab) around the text of a cell are not part of it.
+- The table has as many columns as its longest row (the header and the
+  separator row count); shorter rows get empty cells at the end.
+- A line that ends in CR (a CRLF file read with 'fileformat' "unix")
+  makes the table unreadable (`CR line endings: try :e ++ff=dos`): the
+  CR would be a new cell on every row.
+
+Output of |:TableopsFormat| and of the column commands ~
+- A row is the indent, `| `, the cells joined with ` | `, and ` |`.
+- A column is as wide as its widest cell (at least 1), measured with
+  |strwidth()|: a wide character counts 2, `\|` counts 2, a tab 1.
+  'showbreak', 'list', 'number', 'linebreak' and the width of the
+  window do not change it (|strdisplaywidth()| would count the wrapping
+  of a long row).
+- Cells of a `---:` column are right-aligned (blanks before the text).
+  All other columns, also centered `:---:` ones, are padded like
+  left-aligned ones (blanks after the text).
+- The separator row is the indent, `|`, one cell per column joined with
+  `|`, and `|`. Each cell is the column width + 2 long and keeps its
+  colons: `---`, `:---`, `---:` or `:---:`.
+- Formatting twice gives the same lines.
+Example (widths 4, 4 and 12): >
+	| name | 年齢 | city \| area |
+	|:-----|-----:|:------------:|
+	| foo  |   12 | tokyo        |
+<
+							*tableops-pattern*
+Column pattern ~
+The pattern of column N (|:TableopsSearchColumn|,
+|tableops#column_pattern()|) is very magic: >
+	\v^\s*%(\|C*){N-1}\zs\|%(\s*$)@!C*
+<	where C is one character of a cell: >
+	%(\\\||\\%(\|)@!|[^|\\])
+<	It matches the `|` before cell N and the text of the cell with its
+	blanks, up to the next `|`. It reads `\|` as the cells do, works
+	with both regexp engines and does not depend on 'magic' or
+	'ignorecase'. It does not match the closing `|` of a row that has
+	only N-1 cells.
+
+==============================================================================
+8. Messages						*tableops-messages*
+
+Messages start with `[tableops] ` and are kept in |:messages|. On the
+screen they are cut to 50 columns (ending in `...`), so that they cause
+no |hit-enter| prompt in an 80-column Vim with 'showcmd' and 'ruler';
+|:messages| has the full text. Errors use |hl-ErrorMsg|. A command that
+succeeds says nothing, except |:TableopsColumns|, whose line is shown in
+full, and a move at the edge.
+
+The messages are short enough to fit, with the prefix, in those 50
+columns, so the hint of each is seen:
+	`CR line endings: try :e ++ff=dos`	(code `crlf`)
+	`'modifiable' is off (E21)`		(code `not_modifiable`)
+	`the table starts with a separator row`	(code `malformed`)
+Only an argument that the message repeats (`no column 123456...`,
+`column must be a number: ...`) or a Vim error (code `vim_error`) can
+make one longer.
+
+`result would change the table structure` (code `ambiguous`): the
+new lines would be read as another table (a header that appears or
+goes, or a first row that is a separator row), so nothing was changed.
+See |tableops-commands|.
+
+==============================================================================
+9. Privacy						*tableops-privacy*
+
+Nothing is sent anywhere, and no file is read or written. The plugin
+only reads and changes the lines of the current buffer.
+
+==============================================================================
+10. Limitations						*tableops-limitations*
+
+- Only tables whose rows start with `|` are found. GFM tables without
+  the leading `|`, reStructuredText and grid tables are not.
+- Code blocks are not detected: lines starting with `|` inside a fenced
+  block are a table too. A single line starting with `|` is a table of
+  one row.
+- A table whose first line is a separator row, or with CR line endings,
+  is refused (|tableops-text-format|). Open a CRLF file with
+  `:e ++ff=dos`.
+- A tab inside a cell has a width that depends on where it is, so such
+  a column cannot be aligned. Leading tabs (the indent) are fine.
+- Widths follow 'ambiwidth' of the moment: a table aligned with
+  "double" is not aligned with "single", and the other way round.
+- |.| repeats with the current 'operatorfunc'. When another `g@`
+  operator is started and cancelled after a tableops mapping, `.` calls
+  that operator's function (Vim works this way).
+- A Visual delete is not repeated by |.| (|tableops-visual-delete|).
+- An Operator-pending cell motion repeated with |.| cannot be cancelled
+  when its target is gone: `d}|` then `.` on the last row deletes that
+  row (|tableops-o-motions|).
+- A text object repeated with |.| cannot be cancelled either: `ci|NEW`
+  then `.` on the separator row or outside the table changes the text
+  at the cursor (|tableops-text-objects|).
+- Each cell motion reads the whole table again (no cache): about 25 ms
+  per motion in a table of 10,000 rows, less than 1 ms in one of 100.
+- Formatting on InsertLeave (|tableops-auto-format|) leaves the rows of
+  a block insert (`<C-v>jI`) unaligned.
+- A row is aligned with |strwidth()|: a tab in a cell counts 1 and
+  'tabstop' is not followed (see the tab item above).
+- A delete or sort that would leave a row of `-` cells first or second
+  in a table without a header is refused (`ambiguous`): such a row would
+  be read as a separator row. Edit the cell (e.g. `\-`) first.
+- |:TableopsSearchColumn| sets |v:hlsearch| only and does not change
+  'hlsearch': with 'nohlsearch' nothing is highlighted.
+- On a row without the closing `|` whose last cell is empty, the pattern
+  of the last column does not match that cell.
+- In an unformatted row with an empty cell (`|a||b|`), the `|` after the
+  empty cell belongs to the empty cell. |n| after |:TableopsSearchColumn|
+  stops on that `|`, so a column command run there targets the column on
+  its left. Format the table first.
+- `[n]` of |:TableopsSortColumn| reads the first number only: `1,000`
+  sorts as 1, `1e3` as 1, hex is not read.
+- The sort numbers the rows with 8 digits (up to 100 million rows); no
+  real table comes near it.
+- The minimum versions (Vim 9.0, Neovim 0.9) come from the features used;
+  the tests run on Vim 9.2 and Neovim 0.12 only.
+
+vim:tw=78:ts=8:ft=help:norl:

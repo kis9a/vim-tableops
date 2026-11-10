@@ -1,0 +1,48 @@
+let s:root = fnamemodify(expand('<sfile>:p:h:h'), ':p')
+execute 'set runtimepath^=' . fnameescape(s:root)
+set nomore
+set encoding=utf-8
+set noswapfile
+runtime plugin/tableops.vim
+
+" A fresh scratch buffer holding {lines}, with the undo block closed.
+function! TableopsTestBuffer(lines) abort
+  enew!
+  setlocal buftype=nofile bufhidden=wipe
+  call setline(1, a:lines)
+  let &undolevels = &undolevels
+endfunction
+
+function! TableopsTestLines() abort
+  return getline(1, '$')
+endfunction
+
+" Close the current undo block so that the next change is undone alone.
+function! TableopsTestCloseUndo() abort
+  let &undolevels = &undolevels
+endfunction
+
+" The last line of :messages ('' when there is none).
+function! TableopsTestMessage() abort
+  let l:m = split(execute('messages'), "\n")
+  return empty(l:m) ? '' : l:m[-1]
+endfunction
+
+" The character under the cursor.
+function! TableopsTestChar() abort
+  return matchstr(getline('.'), '\%' . col('.') . 'c.')
+endfunction
+
+" Put the cursor on the {nth} (default 1) occurrence of {text} in line
+" {lnum} (a literal string).
+function! TableopsTestCursor(lnum, text, ...) abort
+  let l:nth = a:0 ? a:1 : 1
+  let l:col = -1
+  for l:_ in range(l:nth)
+    let l:col = stridx(getline(a:lnum), a:text, l:col + 1)
+  endfor
+  if l:col < 0
+    throw 'TableopsTestCursor: no ' . a:text . ' in line ' . a:lnum
+  endif
+  call cursor(a:lnum, l:col + 1)
+endfunction
